@@ -7,9 +7,9 @@ services:
     startCommand: python src/server.py
     autoDeploy: false
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
       - key: GARMINTOKENS_BASE64
         sync: false
-      - key: GARMIN_EMAIL
-        sync: false
-      - key: GARMIN_PASSWORD
+      - key: MCP_SECRET
         sync: false

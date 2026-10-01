@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastmcp import FastMCP
-from config import PORT, HOST
+from config import PORT, HOST, MCP_PATH
 from garmin_client import init_garmin_client
 
 # Import all tool modules
@@ -78,7 +78,8 @@ if __name__ == "__main__":
 
     mcp.run(
         transport="http",
-        host=HOST,
+      host=HOST,
+      path=MCP_PATH,
         port=PORT,
         stateless_http=True,
     )
