@@ -2,31 +2,71 @@
 Garmin Connect authentication wrapper for cloud deployment.
 
 Handles token-based and credential-based authentication for the Garmin API.
+Login is deferred to the first tool call so a rate-limited login (HTTP 429)
+cannot crash the server at startup.
 """
 import io
 import sys
+import time
 
 from garminconnect import Garmin, GarminConnectAuthenticationError
 from garth.exc import GarthHTTPError
 
 from config import GARMINTOKENS_BASE64, GARMIN_EMAIL, GARMIN_PASSWORD
 
+RETRY_COOLDOWN_SECONDS = 900  # wait 15 minutes after a failed login
+
+
+class LazyGarmin:
+    """Stands in for the Garmin client; logs in on first use, backs off on failure."""
+
+    def __init__(self, factory, cooldown=RETRY_COOLDOWN_SECONDS):
+        self._factory = factory
+        self._cooldown = cooldown
+        self._client = None
+        self._next_try = 0.0
+
+    def _get(self):
+        if self._client is not None:
+            return self._client
+        wait = self._next_try - time.time()
+        if wait > 0:
+            raise RuntimeError(
+                f"Garmin login failed recently; retrying in {int(wait)}s."
+            )
+        try:
+            client = self._factory()
+        except Exception as e:
+            self._next_try = time.time() + self._cooldown
+            print(f"ERROR: Garmin login failed: {e}", file=sys.stderr)
+            raise RuntimeError(f"Garmin login failed: {e}") from e
+        if client is None:
+            self._next_try = time.time() + self._cooldown
+            raise RuntimeError("Garmin login failed; see server log.")
+        self._client = client
+        return client
+
+    def __getattr__(self, name):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._get(), name)
+
 
 def init_garmin_client():
-    """Initialize and return an authenticated Garmin client.
+    """Return a Garmin client that authenticates on first use.
 
     Authentication priority:
     1. GARMINTOKENS_BASE64 env var (base64-encoded OAuth tokens, recommended for cloud)
     2. GARMIN_EMAIL + GARMIN_PASSWORD (direct credentials, only works without MFA)
 
     Returns:
-        Authenticated Garmin client instance, or None on failure.
+        A LazyGarmin wrapper, or None if no credentials are configured.
     """
     if GARMINTOKENS_BASE64:
-        return _auth_with_tokens(GARMINTOKENS_BASE64)
+        return LazyGarmin(lambda: _auth_with_tokens(GARMINTOKENS_BASE64))
 
     if GARMIN_EMAIL and GARMIN_PASSWORD:
-        return _auth_with_credentials(GARMIN_EMAIL, GARMIN_PASSWORD)
+        return LazyGarmin(lambda: _auth_with_credentials(GARMIN_EMAIL, GARMIN_PASSWORD))
 
     print(
         "ERROR: No Garmin credentials configured.\n"
